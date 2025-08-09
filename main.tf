@@ -1,19 +1,10 @@
 resource "aws_wafv2_web_acl" "this" {
   name        = var.name
   description = "WAFv2 ACL for ${var.name}"
-
-  scope = var.scope
+  scope       = var.scope
 
   default_action {
-    dynamic "allow" {
-      for_each = var.default_action == "allow" ? [1] : []
-      content {}
-    }
-
-    dynamic "block" {
-      for_each = var.default_action == "block" ? [1] : []
-      content {}
-    }
+    allow {}
   }
 
   visibility_config {
@@ -95,10 +86,15 @@ resource "aws_wafv2_web_acl" "this" {
         dynamic "block" {
           for_each = rule.value.action == "block" ? [1] : []
           content {
-            dynamic "custom_response" {
-              for_each = rule.value.response_code != 403 ? [1] : []
-              content {
-                response_code = rule.value.response_code
+            custom_response {
+              response_code = rule.value.response_code
+              response_header {
+                name  = "Access-Control-Allow-Origin"
+                value = "*"
+              }
+              response_header {
+                name  = "Access-Control-Allow-Methods"
+                value = "*"
               }
             }
           }
@@ -134,10 +130,15 @@ resource "aws_wafv2_web_acl" "this" {
         dynamic "block" {
           for_each = rule.value.action == "block" ? [1] : []
           content {
-            dynamic "custom_response" {
-              for_each = rule.value.response_code != 403 ? [1] : []
-              content {
-                response_code = rule.value.response_code
+            custom_response {
+              response_code = rule.value.response_code
+              response_header {
+                name  = "Access-Control-Allow-Origin"
+                value = "*"
+              }
+              response_header {
+                name  = "Access-Control-Allow-Methods"
+                value = "*"
               }
             }
           }
@@ -179,10 +180,15 @@ resource "aws_wafv2_web_acl" "this" {
         dynamic "block" {
           for_each = rule.value.action == "block" ? [1] : []
           content {
-            dynamic "custom_response" {
-              for_each = rule.value.response_code != 403 ? [1] : []
-              content {
-                response_code = rule.value.response_code
+            custom_response {
+              response_code = rule.value.response_code
+              response_header {
+                name  = "Access-Control-Allow-Origin"
+                value = "*"
+              }
+              response_header {
+                name  = "Access-Control-Allow-Methods"
+                value = "*"
               }
             }
           }
@@ -291,6 +297,225 @@ resource "aws_wafv2_web_acl" "this" {
       statement {
         rule_group_reference_statement {
           arn = rule.value.arn
+        }
+      }
+
+      visibility_config {
+        cloudwatch_metrics_enabled = true
+        metric_name                = rule.value.name
+        sampled_requests_enabled   = true
+      }
+    }
+  }
+
+  dynamic "rule" {
+    for_each = var.geo_rules
+    content {
+      name     = rule.value.name
+      priority = rule.value.priority
+
+      action {
+        dynamic "count" {
+          for_each = rule.value.action == "count" ? [1] : []
+          content {}
+        }
+        dynamic "block" {
+          for_each = rule.value.action == "block" ? [1] : []
+          content {
+            custom_response {
+              response_code = rule.value.response_code
+              response_header {
+                name  = "Access-Control-Allow-Origin"
+                value = "*"
+              }
+              response_header {
+                name  = "Access-Control-Allow-Methods"
+                value = "*"
+              }
+            }
+          }
+        }
+      }
+
+      statement {
+        # If there are excluded paths, wrap in AND NOT statement
+        dynamic "and_statement" {
+          for_each = length(var.excluded_paths) > 0 ? [1] : []
+          content {
+            # First part: the original geo rule logic
+            statement {
+              # Geo match for country-based labeling
+              dynamic "geo_match_statement" {
+                for_each = rule.value.type == "geo_match" && length(rule.value.country_codes) > 0 ? [1] : []
+                content {
+                  country_codes = rule.value.country_codes
+                }
+              }
+
+              # Not statement for blocking based on absence of labels
+              dynamic "not_statement" {
+                for_each = rule.value.type == "not_labels" && length(rule.value.label_keys) > 0 ? [1] : []
+                content {
+                  statement {
+                    dynamic "or_statement" {
+                      for_each = length(rule.value.label_keys) > 1 ? [1] : []
+                      content {
+                        dynamic "statement" {
+                          for_each = rule.value.label_keys
+                          content {
+                            label_match_statement {
+                              scope = "LABEL"
+                              key   = statement.value
+                            }
+                          }
+                        }
+                      }
+                    }
+                    # Single label case (no OR needed)
+                    dynamic "label_match_statement" {
+                      for_each = length(rule.value.label_keys) == 1 ? [rule.value.label_keys[0]] : []
+                      content {
+                        scope = "LABEL"
+                        key   = label_match_statement.value
+                      }
+                    }
+                  }
+                }
+              }
+
+              # Direct label match for blocking specific states
+              dynamic "or_statement" {
+                for_each = rule.value.type == "label_match" && length(rule.value.label_keys) > 1 ? [1] : []
+                content {
+                  dynamic "statement" {
+                    for_each = rule.value.label_keys
+                    content {
+                      label_match_statement {
+                        scope = "LABEL"
+                        key   = statement.value
+                      }
+                    }
+                  }
+                }
+              }
+
+              dynamic "label_match_statement" {
+                for_each = rule.value.type == "label_match" && length(rule.value.label_keys) == 1 ? [rule.value.label_keys[0]] : []
+                content {
+                  scope = "LABEL"
+                  key   = label_match_statement.value
+                }
+              }
+            }
+
+            # Second part: NOT any of the excluded paths
+            statement {
+              not_statement {
+                statement {
+                  # If we have multiple paths to exclude, wrap them in an OR
+                  dynamic "or_statement" {
+                    for_each = length(var.excluded_paths) > 1 ? [1] : []
+                    content {
+                      dynamic "statement" {
+                        for_each = var.excluded_paths
+                        content {
+                          byte_match_statement {
+                            field_to_match {
+                              uri_path {}
+                            }
+                            positional_constraint = "STARTS_WITH"
+                            search_string         = statement.value
+                            text_transformation {
+                              priority = 0
+                              type     = "NONE"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  # If we only have one path to exclude, no need for OR
+                  dynamic "byte_match_statement" {
+                    for_each = length(var.excluded_paths) == 1 ? [var.excluded_paths[0]] : []
+                    content {
+                      field_to_match {
+                        uri_path {}
+                      }
+                      positional_constraint = "STARTS_WITH"
+                      search_string         = byte_match_statement.value
+                      text_transformation {
+                        priority = 0
+                        type     = "NONE"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        # If no excluded_paths, use the original logic directly
+        dynamic "geo_match_statement" {
+          for_each = rule.value.type == "geo_match" && length(rule.value.country_codes) > 0 && length(var.excluded_paths) == 0 ? [1] : []
+          content {
+            country_codes = rule.value.country_codes
+          }
+        }
+
+        # Not statement for blocking based on absence of labels (when no excluded paths)
+        dynamic "not_statement" {
+          for_each = rule.value.type == "not_labels" && length(rule.value.label_keys) > 0 && length(var.excluded_paths) == 0 ? [1] : []
+          content {
+            statement {
+              dynamic "or_statement" {
+                for_each = length(rule.value.label_keys) > 1 ? [1] : []
+                content {
+                  dynamic "statement" {
+                    for_each = rule.value.label_keys
+                    content {
+                      label_match_statement {
+                        scope = "LABEL"
+                        key   = statement.value
+                      }
+                    }
+                  }
+                }
+              }
+              # Single label case (no OR needed)
+              dynamic "label_match_statement" {
+                for_each = length(rule.value.label_keys) == 1 ? [rule.value.label_keys[0]] : []
+                content {
+                  scope = "LABEL"
+                  key   = label_match_statement.value
+                }
+              }
+            }
+          }
+        }
+
+        # Direct label match for blocking specific states (when no excluded paths)
+        dynamic "or_statement" {
+          for_each = rule.value.type == "label_match" && length(rule.value.label_keys) > 1 && length(var.excluded_paths) == 0 ? [1] : []
+          content {
+            dynamic "statement" {
+              for_each = rule.value.label_keys
+              content {
+                label_match_statement {
+                  scope = "LABEL"
+                  key   = statement.value
+                }
+              }
+            }
+          }
+        }
+
+        dynamic "label_match_statement" {
+          for_each = rule.value.type == "label_match" && length(rule.value.label_keys) == 1 && length(var.excluded_paths) == 0 ? [rule.value.label_keys[0]] : []
+          content {
+            scope = "LABEL"
+            key   = label_match_statement.value
+          }
         }
       }
 

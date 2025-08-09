@@ -22,6 +22,17 @@ variable "managed_rules" {
   }))
   description = "List of Managed WAF rules."
   default     = []
+  /*
+  default = [
+    {
+      name                 = "AWSManagedRulesCommonRuleSet",
+      priority             = 10
+      override_action      = "none"
+      vendor_name          = "AWS"
+      rule_action_override = []
+    }
+  ]
+  */
 }
 
 variable "ip_sets_rule" {
@@ -85,10 +96,24 @@ variable "group_rules" {
   default     = []
 }
 
-variable "default_action" {
-  type        = string
-  description = "The action to perform if none of the rules contained in the WebACL match."
-  default     = "allow"
+variable "geo_rules" {
+  type = list(object({
+    name          = string
+    priority      = number
+    action        = string                     # "count" or "block"
+    type          = string                     # "label_us_ca", "block_non_us_ca", or "block_state"
+    country_codes = optional(list(string), []) # For geo_match (e.g., ["US", "CA"])
+    label_keys    = optional(list(string), []) # For not_labels or label_match (e.g., ["awswaf:clientip:geo:region:US-AZ"])
+    response_code = optional(number, 403)
+  }))
+  description = "List of WAFv2 geo-based rules."
+  default     = []
+}
+
+variable "excluded_paths" {
+  type        = list(string)
+  description = "A rule to exclude a single path from being evaluated by the WAF"
+  default     = []
 }
 
 variable "cloudwatch_metrics_enabled" {
@@ -106,7 +131,7 @@ variable "sampled_requests_enabled" {
 variable "web_acl_associations_arn" {
   type        = string
   default     = null
-  description = "A resource ARN to associate with the Web ACL"
+  description = "A resource ARN to associate with the Web ACL."
 }
 
 variable "enabled_wafv2_web_acl_association" {
