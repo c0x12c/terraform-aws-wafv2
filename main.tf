@@ -147,8 +147,9 @@ resource "aws_wafv2_web_acl" "this" {
 
       statement {
         rate_based_statement {
-          limit              = rule.value.limit
-          aggregate_key_type = "IP"
+          limit                 = rule.value.limit
+          aggregate_key_type    = "IP"
+          evaluation_window_sec = rule.value.evaluation_window_sec
         }
       }
 
@@ -197,8 +198,10 @@ resource "aws_wafv2_web_acl" "this" {
 
       statement {
         rate_based_statement {
-          limit              = rule.value.limit
-          aggregate_key_type = "IP"
+          limit                 = rule.value.limit
+          aggregate_key_type    = "IP"
+          evaluation_window_sec = rule.value.evaluation_window_sec
+
           scope_down_statement {
             byte_match_statement {
               positional_constraint = rule.value.positional_constraint
